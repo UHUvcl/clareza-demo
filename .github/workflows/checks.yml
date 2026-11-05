@@ -1,19 +1,54 @@
-name: Verificações
-on: [push, pull_request]
-permissions:
-  contents: read
+name: Verificar e publicar no GitHub Pages
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
 jobs:
   demo:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
       - run: npm ci
       - run: npm test
-      - run: npm run build
+      - run: npm run typecheck
+      - run: npm run build -- --mode pages
       - run: npm run check:isolation
       - run: npx playwright install --with-deps chromium
       - run: npm run test:browser
+        env:
+          TEST_BASE_PATH: /clareza-demo/
+      - uses: actions/upload-pages-artifact@v4
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.repository == 'uhuvcl/clareza-demo'
+        with:
+          path: dist
+
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.repository == 'uhuvcl/clareza-demo'
+    needs: demo
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    concurrency:
+      group: github-pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v5
+      - uses: actions/deploy-pages@v4
+        id: deployment

@@ -88,7 +88,7 @@ npm run test:browser
 ```
 
 - **50 testes de domínio e estado local:** cálculos, CSV, recebimentos, reversões, previsões, recorrências, alertas, transferências e falhas sem alteração do estado.
-- **6 testes de navegador:** cadastro/edição/exclusão, recebimentos, importação/exportação simuladas, reinício, navegação, celular, tema e bloqueio dos canais de rede.
+- **7 testes de navegador:** cadastro/edição/exclusão, recebimentos, importação/exportação simuladas, reinício, navegação, celular, tema e bloqueio dos canais de rede.
 - Os testes de navegador servem `dist/` em uma porta local temporária e também verificam hospedagem em subdiretório (`/portfolio/`). Não acessam o aplicativo original.
 - No macOS, os testes podem usar o Chrome instalado. Em outros ambientes, instale o Chromium do Playwright. `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` permite indicar um executável.
 - Capturas são produzidas em `artifacts/`, ignorado pelo Git. As imagens em `docs/` mostram apenas dados fictícios.
@@ -133,10 +133,35 @@ docs/                Documentação e capturas fictícias
 - O build ainda inclui um bundle principal de aproximadamente 917 kB (270 kB gzip). A divisão de código pode melhorar o primeiro carregamento; o aviso de tamanho não impede o build.
 - O escopo não inclui uma refatoração geral dos componentes grandes herdados do original.
 
-## Preparação para hospedagem
+## Publicação no GitHub Pages
 
-O build usa caminhos relativos e pode ser servido na raiz ou em uma subpasta por uma hospedagem estática, incluindo GitHub Pages. Não há necessidade de servidor Node em produção nem regras de redirecionamento para rotas: a navegação interna usa estado React.
+Endereço previsto: https://uhuvcl.github.io/clareza-demo/ (a configuração local não significa que o site já foi publicado).
 
-Somente `dist/` precisa ser hospedado. Não publique `node_modules`, arquivos de trabalho ou dados externos. A CSP principal já acompanha o HTML. `public/_headers` contém cabeçalhos adicionais para provedores compatíveis; o GitHub Pages não interpreta esse arquivo, então esses cabeçalhos extras não devem ser considerados garantidos nesse provedor.
+O modo `pages` configura o Vite com `base: '/clareza-demo/'`. O desenvolvimento e o build local padrão continuam com caminhos relativos. Para reproduzir o build de publicação e seus testes:
 
-Esta entrega não cria remoto nem publica. Antes da publicação, escolha o repositório/hospedagem, decida a licença do código autoral e confira a página no endereço definitivo. As licenças de terceiros incluídas em `vendor/` devem ser preservadas.
+```sh
+npm ci
+npm test
+npm run typecheck
+npm run build -- --mode pages
+npm run check:isolation
+npx playwright install chromium
+TEST_BASE_PATH=/clareza-demo/ npm run test:browser
+npm run preview -- --mode pages
+```
+
+A prévia fica em `http://127.0.0.1:4187/clareza-demo/`. A navegação usa estado React; atualizar a página nesse endereço restaura o cenário fictício inicial, sem exigir redirecionamentos ou persistência. As fontes são locais/do sistema. `public/.nojekyll` é copiado para `dist/`.
+
+O workflow `.github/workflows/checks.yml` verifica pull requests e alterações em `main`. Instala dependências, executa os testes, verifica TypeScript, compila no modo Pages, verifica o isolamento e executa os testes de navegador no subdiretório. Somente após aprovação dessas etapas o artefato `dist/` pode ser publicado por `actions/deploy-pages`.
+
+Quando a publicação for autorizada e o código estiver no repositório `uhuvcl/clareza-demo`:
+
+1. Em **Settings → Pages → Build and deployment → Source**, selecione **GitHub Actions**.
+2. Um push em `main` ou uma execução manual do workflow nessa branch iniciará a publicação. Pull requests apenas validam, sem publicar.
+3. Confira o resultado do ambiente `github-pages` e o endereço definitivo.
+
+O job de verificação tem apenas `contents: read`. As permissões `pages: write` e `id-token: write` ficam restritas ao job de publicação, que depende dos testes e só executa na `main` do repositório indicado. Não é necessário adicionar token pessoal ou credenciais ao projeto.
+
+A CSP principal acompanha o HTML. GitHub Pages não interpreta `public/_headers`; os cabeçalhos adicionais desse arquivo não são garantidos nessa hospedagem. Nenhuma integração ou persistência financeira foi adicionada.
+
+Esta preparação não cria remoto nem realiza push/deploy. A licença do código autoral continua a definir; preserve as licenças de terceiros em `vendor/`.

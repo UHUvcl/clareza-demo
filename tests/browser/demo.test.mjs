@@ -8,11 +8,15 @@ import { chromium } from 'playwright';
 let browser, server, origin;
 const received = [];
 const root = resolve('dist');
+const basePath = process.env.TEST_BASE_PATH || '/portfolio/';
+assert.match(basePath, /^\/[a-z0-9-]+\/$/);
 const csp = readFileSync('index.html','utf8').match(/http-equiv="Content-Security-Policy" content="([^"]+)"/)[1];
 before(async () => {
   server = createServer((req,res) => {
     received.push({ url: req.url, method: req.method });
-    const relative = decodeURIComponent(new URL(req.url, 'http://local').pathname).replace(/^\/portfolio\//, '/');
+    const pathname = decodeURIComponent(new URL(req.url, 'http://local').pathname);
+    if (!pathname.startsWith(basePath)) { res.writeHead(404); res.end(); return; }
+    const relative = '/' + pathname.slice(basePath.length);
     const file=resolve(root, '.' + (relative === '/' ? '/index.html' : relative));
     if (!file.startsWith(root + '/') || !existsSync(file)) { res.writeHead(404);res.end();return; }
     const mime={'.html':'text/html','.js':'text/javascript','.css':'text/css','.svg':'image/svg+xml'}[extname(file)] || 'application/octet-stream';
@@ -28,15 +32,16 @@ after(async()=>{await browser?.close();await new Promise(resolve=>server?.close(
 
 async function open(t, mobile=false) {
   const context=await browser.newContext({viewport:mobile?{width:390,height:844}:{width:1440,height:1000},timezoneId:'America/Recife'});
-  const errors=[], external=[];
+  const errors=[], external=[], failedAssets=[];
   await context.route('**/*',async route=>{
     const url=route.request().url();
     if (/^https?:/.test(url) && new URL(url).origin !== origin) { external.push(url);await route.abort(); }
     else await route.continue();
   });
   const page=await context.newPage();page.setDefaultTimeout(10000);page.on('pageerror',error=>errors.push(error.message));
-  t.after(async()=>{assert.deepEqual(errors,[],'Erros no navegador');assert.deepEqual(external,[],'Tentativa de rede externa');await context.close();});
-  await page.goto(origin+'/portfolio/');
+  page.on('response',response=>{ if (response.status() >= 400) failedAssets.push(response.url()); });
+  t.after(async()=>{assert.deepEqual(errors,[],'Erros no navegador');assert.deepEqual(external,[],'Tentativa de rede externa');assert.deepEqual(failedAssets,[],'Recurso com erro HTTP');await context.close();});
+  await page.goto(origin+basePath);
   await page.getByRole('heading',{name:'Olá, vamos explorar.'}).waitFor();
   return page;
 }
@@ -141,4 +146,30 @@ test('isolamento: apenas arquivos estáticos, sem persistência, permissões ou 
   assert.ok(received.every(request=>request.method==='GET'&&!request.url.includes('/api/')));
   assert.equal(await page.locator('a[href^="http"]').count(),0);
   mkdirSync('artifacts',{recursive:true});await page.screenshot({path:'artifacts/desktop.png',fullPage:true});
+});
+
+test('hospedagem: recursos, estilos e fontes funcionam no subdiretório após atualização', async t => {
+  const page = await open(t);
+  await page.evaluate(() => document.fonts.ready);
+  const resources = await page.locator('script[src], link[href], img[src]').evaluateAll(elements =>
+    elements.map(element => element.src || element.href));
+  assert.ok(resources.some(url => url.endsWith('.js')));
+  assert.ok(resources.some(url => url.endsWith('.css')));
+  for (const url of resources) {
+    const parsed = new URL(url);
+    assert.equal(parsed.origin, origin);
+    assert.ok(parsed.pathname.startsWith(basePath), url);
+  }
+  assert.equal(await page.evaluate(() => document.fonts.status), 'loaded');
+  assert.ok(await page.evaluate(() => [...document.styleSheets].some(sheet => sheet.cssRules.length > 0)));
+  const icon = await page.locator('link[rel="icon"]').getAttribute('href');
+  const response = await fetch(new URL(icon, page.url()));
+  assert.equal(response.status, 200);
+  assert.match(await response.text(), /<svg/);
+  await nav(page, 'Relatórios');
+  assert.equal(page.url(), origin + basePath);
+  await page.reload();
+  await page.getByRole('heading', { name: 'Olá, vamos explorar.' }).waitFor();
+  assert.equal(page.url(), origin + basePath);
+  assert.ok(existsSync(resolve(root, '.nojekyll')));
 });
